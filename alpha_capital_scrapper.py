@@ -2,7 +2,7 @@ import re
 from bs4 import BeautifulSoup
 from typing import Dict, List
 from datetime import datetime
-from .base_scraper import BaseScraper
+from base_scraper import BaseScraper
 
 class AlphaCapitalScraper(BaseScraper):
     """Enhanced scraper for Alpha Capital Group website"""
