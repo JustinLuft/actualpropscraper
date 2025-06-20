@@ -3,89 +3,196 @@ import time
 from bs4 import BeautifulSoup
 from typing import Dict, List
 from datetime import datetime
-from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from base_scraper import BaseScraper
 
 class AlphaCapitalScraper(BaseScraper):
     """Enhanced scraper for Alpha Capital Group website with JavaScript support"""
     
-    def __init__(self):
-        super().__init__()
-        self.driver = None
+    def __init__(self, headless: bool = True, timeout: int = 30):
+        super().__init__(headless, timeout)
         
     def get_base_url(self) -> str:
         return "https://alphacapitalgroup.uk/"
         
-    def setup_driver(self):
-        """Setup Selenium WebDriver with appropriate options"""
-        chrome_options = Options()
-        chrome_options.add_argument('--headless')  # Run in background
-        chrome_options.add_argument('--no-sandbox')
-        chrome_options.add_argument('--disable-dev-shm-usage')
-        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_options.add_experimental_option('useAutomationExtension', False)
-        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+    def get_selectors(self) -> Dict[str, List[str]]:
+        """Return CSS selectors optimized for Alpha Capital Group"""
+        return {
+            "primary_selectors": [
+                # Price display areas
+                "[class*='price']",
+                ".assessment-price",
+                ".price-display",
+                ".cost-display",
+                # Account size buttons/containers
+                "button[class*='size']",
+                "[data-value*='000']",
+                ".account-size",
+                # Plan containers
+                ".plan-card",
+                ".evaluation-card",
+                ".tier-card",
+                # Step buttons
+                "button[class*='step']",
+                ".step-button"
+            ],
+            "secondary_selectors": [
+                # Generic containers that might hold pricing info
+                ".card",
+                ".pricing-tier", 
+                ".plan-wrapper",
+                ".package",
+                ".product-card",
+                # Form elements
+                "form [class*='price']",
+                ".form-group",
+                # Table elements
+                "table [class*='price']",
+                "td, th"
+            ],
+            "fallback_selectors": [
+                # Very generic containers
+                "div[class*='plan']",
+                "div[class*='price']",
+                "div[class*='tier']",
+                ".container .row > div",
+                ".section > div"
+            ]
+        }
         
-        self.driver = webdriver.Chrome(options=chrome_options)
-        self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        
-    def scrape_accounts(self) -> List[Dict[str, str]]:
-        """Main scraping method with JavaScript support"""
-        if not self.driver:
-            self.setup_driver()
+    def extract_account_info(self, element) -> Dict[str, str]:
+        """Extract account information from element with enhanced logic"""
+        try:
+            text = element.text.strip() if hasattr(element, 'text') else str(element)
             
+            if len(text) < 10:  # Skip elements with too little content
+                return {}
+                
+            account_data = {
+                'business_name': 'Alpha Capital Group',
+                'account_size': self._extract_account_size(text),
+                'sale_price': self._extract_sale_price(text),
+                'funded_full_price': self._extract_funded_price(text),
+                'discount_coupon_code': self._extract_discount_code(text),
+                'trail_type': self._extract_trail_type(text),
+                'trustpilot_score': self._extract_trustpilot_score(text),
+                'profit_goal': self._extract_profit_goal(text),
+                'scraped_at': datetime.now().isoformat()
+            }
+            
+            return account_data
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting account info: {e}")
+            return {}
+            
+    def scrape_website(self, url: str = None) -> List[Dict[str, str]]:
+        """Override to add interactive scraping for Alpha Capital"""
+        if not url:
+            url = self.get_base_url()
+            
+        max_retries = self.config.get("max_retries", 3)
+        delay = self.config.get("delay_between_requests", 2)
+        
+        for attempt in range(max_retries):
+            try:
+                self.setup_driver()
+                self.logger.info(f"Attempt {attempt + 1}/{max_retries}: Scraping {url}")
+                
+                self.driver.get(url)
+                self.wait_for_page_load(5)  # Extra wait for dynamic content
+                self.handle_popups()
+                
+                # Alpha Capital specific: Interactive scraping
+                accounts_data = self._scrape_interactive_data()
+                
+                if accounts_data:
+                    self.logger.info(f"Successfully scraped {len(accounts_data)} accounts")
+                    return self.validate_data(accounts_data)
+                else:
+                    # Fallback to standard extraction
+                    accounts_data = self._extract_data()
+                    if accounts_data:
+                        return self.validate_data(accounts_data)
+                    
+                self.logger.warning(f"No data found on attempt {attempt + 1}")
+                    
+            except Exception as e:
+                self.logger.error(f"Attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    self.logger.info(f"Retrying in {delay} seconds...")
+                    time.sleep(delay)
+                    delay *= 2
+            finally:
+                self.close_driver()
+                
+        self.logger.error(f"All {max_retries} attempts failed for {url}")
+        return []
+        
+    def _scrape_interactive_data(self) -> List[Dict[str, str]]:
+        """Interactive scraping specific to Alpha Capital Group"""
         accounts_data = []
         
         try:
-            self.driver.get(self.get_base_url())
-            
-            # Wait for page to load
-            WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.TAG_NAME, "body"))
-            )
-            
-            # Wait for dynamic content to load
-            time.sleep(3)
-            
-            # Get account size options
+            # Get available account sizes and plan types
             account_sizes = self._get_account_sizes()
+            plan_types = self._get_plan_types()
             
-            # Scrape data for each account size and plan type
-            for account_size in account_sizes:
-                # Try different plan types (1 Step, 2 Step, 3 Step if available)
-                plan_types = self._get_plan_types()
-                
-                for plan_type in plan_types:
-                    account_data = self._scrape_specific_plan(account_size, plan_type)
-                    if account_data and self._is_valid_data(account_data):
-                        accounts_data.append(account_data)
+            self.logger.info(f"Found account sizes: {account_sizes}")
+            self.logger.info(f"Found plan types: {plan_types}")
+            
+            # Try each combination
+            for account_size in account_sizes[:5]:  # Limit to avoid too many requests
+                for plan_type in plan_types[:3]:  # Limit plan types
+                    try:
+                        account_data = self._scrape_specific_combination(account_size, plan_type)
+                        if account_data and self._is_valid_data(account_data):
+                            accounts_data.append(account_data)
+                            self.logger.info(f"Scraped data for {account_size} - {plan_type}")
+                        
+                        # Small delay between combinations
+                        time.sleep(1)
+                        
+                    except Exception as e:
+                        self.logger.warning(f"Failed to scrape {account_size}-{plan_type}: {e}")
+                        continue
                         
             return accounts_data
             
         except Exception as e:
-            self.logger.error(f"Error during scraping: {e}")
+            self.logger.error(f"Error in interactive scraping: {e}")
             return []
-        finally:
-            if self.driver:
-                self.driver.quit()
-                
+            
     def _get_account_sizes(self) -> List[str]:
-        """Extract available account sizes from the page"""
+        """Extract available account sizes"""
         account_sizes = []
         
         try:
-            # Look for account size buttons/options
+            # Look for account size buttons/displays
+            size_patterns = [
+                r'\$(\d{1,3}(?:,\d{3})*)',  # $5,000, $10,000, etc.
+                r'(\d+[kK])',  # 50K, 100K
+                r'(\d+,\d{3})'  # 25,000
+            ]
+            
+            page_text = self.driver.page_source
+            
+            for pattern in size_patterns:
+                matches = re.findall(pattern, page_text)
+                for match in matches:
+                    if match and match not in account_sizes:
+                        # Filter reasonable account sizes
+                        size_num = int(match.replace(',', '').replace('K', '000').replace('k', '000'))
+                        if 1000 <= size_num <= 1000000:  # Between $1K and $1M
+                            account_sizes.append(match)
+                            
+            # Try clicking to find interactive elements
             size_selectors = [
-                "button[class*='size']",
-                "div[class*='size']",
-                ".account-size",
                 "button:contains('$')",
+                "[class*='size'] button",
                 "[data-value*='000']"
             ]
             
@@ -94,42 +201,46 @@ class AlphaCapitalScraper(BaseScraper):
                     elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
                     for element in elements:
                         text = element.text.strip()
-                        # Extract dollar amounts
-                        size_match = re.search(r'\$(\d+,?\d*)', text)
-                        if size_match:
-                            size = size_match.group(1)
-                            if size not in account_sizes:
-                                account_sizes.append(size)
+                        size_match = re.search(r'\$?(\d+,?\d*)', text)
+                        if size_match and size_match.group(1) not in account_sizes:
+                            account_sizes.append(size_match.group(1))
                 except:
                     continue
                     
-            # If no sizes found, look in the page source
-            if not account_sizes:
-                page_text = self.driver.page_source
-                size_matches = re.findall(r'\$(\d+,\d{3})', page_text)
-                account_sizes = list(set(size_matches))
-                
-            # Default sizes if nothing found (from screenshot)
+            # Default fallback from screenshot
             if not account_sizes:
                 account_sizes = ['5,000', '10,000', '25,000', '50,000', '100,000', '200,000']
                 
-            return account_sizes[:6]  # Limit to reasonable number
+            return account_sizes[:6]  # Limit results
             
         except Exception as e:
             self.logger.error(f"Error getting account sizes: {e}")
-            return ['10,000', '50,000']  # Fallback
+            return ['10,000', '50,000']  # Minimal fallback
             
     def _get_plan_types(self) -> List[str]:
-        """Get available plan types"""
+        """Extract available plan types"""
         try:
             plan_types = []
             
-            # Look for step buttons
+            # Look for step buttons and plan types
+            page_text = self.driver.page_source.lower()
+            
+            if '1 step' in page_text or 'one step' in page_text:
+                plan_types.append('1 Step')
+            if '2 step' in page_text or 'two step' in page_text:
+                plan_types.append('2 Step')
+            if '3 step' in page_text or 'three step' in page_text:
+                plan_types.append('3 Step')
+            if 'assessment' in page_text:
+                plan_types.append('Assessment')
+            if 'evaluation' in page_text:
+                plan_types.append('Evaluation')
+                
+            # Try to find interactive elements
             step_selectors = [
-                "button:contains('Step')",
+                "button[class*='step']",
                 ".step-button",
-                "[class*='step']",
-                "button[class*='plan']"
+                "button:contains('Step')"
             ]
             
             for selector in step_selectors:
@@ -137,104 +248,89 @@ class AlphaCapitalScraper(BaseScraper):
                     elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
                     for element in elements:
                         text = element.text.strip()
-                        if 'step' in text.lower():
+                        if text and text not in plan_types:
                             plan_types.append(text)
                 except:
                     continue
                     
-            if not plan_types:
-                plan_types = ['1 Step', '2 Step', '3 Step']
-                
-            return plan_types
+            return plan_types if plan_types else ['Assessment', '1 Step']
             
         except Exception as e:
             self.logger.error(f"Error getting plan types: {e}")
-            return ['assessment']
+            return ['Assessment']
             
-    def _scrape_specific_plan(self, account_size: str, plan_type: str) -> Dict[str, str]:
-        """Scrape data for a specific account size and plan type"""
+    def _scrape_specific_combination(self, account_size: str, plan_type: str) -> Dict[str, str]:
+        """Scrape data for specific account size and plan type combination"""
         try:
-            # Try to click account size if it's a button
-            self._click_account_size(account_size)
+            # Try to interact with the page to select this combination
+            self._select_account_size(account_size)
             time.sleep(1)
+            self._select_plan_type(plan_type)
+            time.sleep(2)  # Wait for price to update
             
-            # Try to click plan type if it's a button  
-            self._click_plan_type(plan_type)
-            time.sleep(1)
-            
-            # Now extract the data from the current state
+            # Extract current state
             account_data = {
                 'business_name': 'Alpha Capital Group',
                 'account_size': account_size.replace(',', ''),
                 'sale_price': self._extract_current_price(),
-                'funded_full_price': self._extract_funded_price_from_page(),
-                'discount_coupon_code': self._extract_discount_from_page(),
+                'funded_full_price': self._extract_funded_price_current(),
+                'discount_coupon_code': self._extract_current_discount(),
                 'trail_type': self._normalize_plan_type(plan_type),
-                'trustpilot_score': self._extract_trustpilot_from_page(),
-                'profit_goal': self._extract_profit_target_from_page(),
+                'trustpilot_score': self._extract_trustpilot_current(),
+                'profit_goal': self._extract_profit_target_current(),
                 'scraped_at': datetime.now().isoformat()
             }
             
             return account_data
             
         except Exception as e:
-            self.logger.error(f"Error scraping plan {plan_type} for {account_size}: {e}")
+            self.logger.warning(f"Error scraping combination {account_size}-{plan_type}: {e}")
             return {}
             
-    def _click_account_size(self, size: str):
-        """Try to click on account size option"""
-        try:
-            # Look for buttons containing the size
-            selectors = [
-                f"button:contains('{size}')",
-                f"button:contains('${size}')",
-                f"[data-value='{size}']",
-                f"[value='{size}']"
-            ]
-            
-            for selector in selectors:
-                try:
-                    element = self.driver.find_element(By.CSS_SELECTOR, selector)
-                    if element.is_displayed():
-                        element.click()
-                        return
-                except:
-                    continue
-                    
-        except Exception as e:
-            self.logger.debug(f"Could not click account size {size}: {e}")
-            
-    def _click_plan_type(self, plan_type: str):
-        """Try to click on plan type option"""
-        try:
-            selectors = [
-                f"button:contains('{plan_type}')",
-                f".step-button:contains('{plan_type}')",
-                f"[data-plan='{plan_type.lower()}']"
-            ]
-            
-            for selector in selectors:
-                try:
-                    element = self.driver.find_element(By.CSS_SELECTOR, selector)
-                    if element.is_displayed():
-                        element.click()
-                        return
-                except:
-                    continue
-                    
-        except Exception as e:
-            self.logger.debug(f"Could not click plan type {plan_type}: {e}")
-            
+    def _select_account_size(self, size: str):
+        """Try to select account size on the page"""
+        selectors = [
+            f"button:contains('{size}')",
+            f"button:contains('${size}')",
+            f"[data-value='{size}']",
+            f"[value='{size}']"
+        ]
+        
+        for selector in selectors:
+            try:
+                element = self.driver.find_element(By.CSS_SELECTOR, selector)
+                if element.is_displayed() and element.is_enabled():
+                    self.driver.execute_script("arguments[0].click();", element)
+                    return
+            except:
+                continue
+                
+    def _select_plan_type(self, plan_type: str):
+        """Try to select plan type on the page"""
+        selectors = [
+            f"button:contains('{plan_type}')",
+            f"[data-plan='{plan_type.lower()}']",
+            f".step-button:contains('{plan_type}')"
+        ]
+        
+        for selector in selectors:
+            try:
+                element = self.driver.find_element(By.CSS_SELECTOR, selector)
+                if element.is_displayed() and element.is_enabled():
+                    self.driver.execute_script("arguments[0].click();", element)
+                    return
+            except:
+                continue
+                
     def _extract_current_price(self) -> str:
-        """Extract the currently displayed price"""
+        """Extract currently displayed price"""
         try:
-            # Look for price displays (from screenshot: "Assessment Price: $97")
+            # Look for price displays
             price_selectors = [
-                "[class*='price']",
-                ".price-display",
+                "[class*='price']:not(:empty)",
                 ".assessment-price",
                 ".cost",
-                ".fee"
+                ".fee-display"
             ]
             
             for selector in price_selectors:
@@ -244,117 +340,177 @@ class AlphaCapitalScraper(BaseScraper):
                         text = element.text
                         price_match = re.search(r'\$(\d+(?:\.\d{2})?)', text)
                         if price_match:
-                            price = price_match.group(1)
-                            # Validate price range
-                            if 50 <= float(price) <= 1000:
-                                return price
+                            price = float(price_match.group(1))
+                            if 30 <= price <= 2000:  # Reasonable price range
+                                return price_match.group(1)
                 except:
                     continue
                     
-            # Fallback: search entire page for price patterns
+            # Fallback: search page source
             page_text = self.driver.page_source
-            price_matches = re.findall(r'(?:price|cost|fee)[:\s]*\$(\d+(?:\.\d{2})?)', page_text, re.IGNORECASE)
-            for price in price_matches:
-                if 50 <= float(price) <= 1000:
+            price_patterns = [
+                r'(?:assessment|price|cost)[:\s]*\$(\d+(?:\.\d{2})?)',
+                r'\$(\d+(?:\.\d{2})?)'
+            ]
+            
+            for pattern in price_patterns:
+                matches = re.findall(pattern, page_text, re.IGNORECASE)
+                for price_str in matches:
+                    price = float(price_str)
+                    if 30 <= price <= 2000:
+                        return price_str
+                        
+            return ""
+            
+        except Exception as e:
+            self.logger.warning(f"Error extracting current price: {e}")
+            return ""
+            
+    # Keep the existing extraction methods from the original code
+    def _extract_account_size(self, text: str) -> str:
+        """Extract account size with improved patterns"""
+        patterns = [
+            r'\$(\d+[,.]?\d*[kK])',  # $100K, $50k, $25K
+            r'(\d+[kK])\s*(?:account|challenge|evaluation)',  # 100K account
+            r'(\d+,\d{3})\s*(?:account|challenge)',  # 100,000 account
+            r'Account.*?(\d+[kK])',  # Account 50K
+            r'(\d{2,3}[kK])\s*funded'  # 100K funded
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                size = match.group(1).upper()
+                if 'K' in size and ',' not in size:
+                    return size
+        return ""
+        
+    def _extract_sale_price(self, text: str) -> str:
+        """Extract sale price with improved accuracy"""
+        patterns = [
+            r'(?:assessment|price|cost|fee).*?\$(\d+(?:,\d{3})*(?:\.\d{2})?)',
+            r'\$(\d+(?:,\d{3})*(?:\.\d{2})?)',
+            r'(?:£|USD|EUR)\s*(\d+(?:,\d{3})*(?:\.\d{2})?)'
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            for price in matches:
+                price_num = float(price.replace(',', ''))
+                if 30 <= price_num <= 2000:
                     return price
-                    
-            return ""
-            
-        except Exception as e:
-            self.logger.error(f"Error extracting price: {e}")
-            return ""
-            
-    def _extract_funded_price_from_page(self) -> str:
-        """Extract funded account price from current page"""
-        try:
-            page_text = self.driver.page_source
-            patterns = [
-                r'funded.*?\$(\d+(?:\.\d{2})?)',
-                r'full.*?price.*?\$(\d+(?:\.\d{2})?)'
-            ]
-            
-            for pattern in patterns:
-                match = re.search(pattern, page_text, re.IGNORECASE)
-                if match:
+        return ""
+        
+    def _extract_funded_price(self, text: str) -> str:
+        """Extract funded account price"""
+        patterns = [
+            r'funded.*?\$(\d+(?:,\d{3})*(?:\.\d{2})?)',
+            r'full.*?price.*?\$(\d+(?:,\d{3})*(?:\.\d{2})?)',
+            r'regular.*?\$(\d+(?:,\d{3})*(?:\.\d{2})?)'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return match.group(1)
+        return ""
+        
+    def _extract_discount_code(self, text: str) -> str:
+        """Extract discount codes and percentages"""
+        patterns = [
+            r'(?:code|coupon)[:\s]+([A-Z0-9]{3,})',
+            r'(?:discount|save)[:\s]+(\d+%)',
+            r'use\s+code[:\s]+([A-Z0-9]+)',
+            r'(\d+%)\s*(?:off|discount)'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return match.group(1)
+        return ""
+        
+    def _extract_trail_type(self, text: str) -> str:
+        """Extract evaluation/trial type"""
+        patterns = [
+            r'(one[- ]?step|two[- ]?step|three[- ]?step)',
+            r'(instant|direct|immediate)',
+            r'(evaluation|challenge|assessment)',
+            r'leverage[:\s]+(\d+:\d+)',
+            r'(phase\s+\d+)'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return match.group(1).lower()
+        return ""
+        
+    def _extract_trustpilot_score(self, text: str) -> str:
+        """Extract Trustpilot score"""
+        patterns = [
+            r'trustpilot.*?(\d+\.?\d*)',
+            r'rating.*?(\d+\.?\d*)',
+            r'score.*?(\d+\.?\d*)',
+            r'(\d+\.?\d*)\s*(?:stars?|rating)'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                score = float(match.group(1))
+                if 1 <= score <= 5:
+                    return str(score)
+        return ""
+        
+    def _extract_profit_goal(self, text: str) -> str:
+        """Extract profit targets and goals"""
+        patterns = [
+            r'(?:profit|target|goal).*?(\d+%)',
+            r'(\d+%)\s*(?:profit|target)',
+            r'reach.*?(\d+%)',
+            r'achieve.*?(\d+%)'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                percentage = int(match.group(1).replace('%', ''))
+                if 1 <= percentage <= 50:
                     return match.group(1)
-            return ""
-            
-        except Exception as e:
-            return ""
-            
-    def _extract_discount_from_page(self) -> str:
-        """Extract discount information from current page"""
+        return ""
+        
+    # Helper methods for current state extraction
+    def _extract_funded_price_current(self) -> str:
+        """Extract funded price from current page state"""
         try:
             page_text = self.driver.page_source
-            patterns = [
-                r'(\d+%)\s*(?:off|discount)',
-                r'save[:\s]+(\d+%)',
-                r'discount[:\s]+(\d+%)'
-            ]
-            
-            for pattern in patterns:
-                match = re.search(pattern, page_text, re.IGNORECASE)
-                if match:
-                    return match.group(1)
+            return self._extract_funded_price(page_text)
+        except:
             return ""
             
-        except Exception as e:
-            return ""
-            
-    def _extract_trustpilot_from_page(self) -> str:
-        """Extract Trustpilot score from page"""
+    def _extract_current_discount(self) -> str:
+        """Extract discount from current page state"""
         try:
             page_text = self.driver.page_source
-            patterns = [
-                r'trustpilot.*?(\d+\.?\d*)',
-                r'(\d+\.?\d*)\s*(?:stars?|rating)'
-            ]
-            
-            for pattern in patterns:
-                match = re.search(pattern, page_text, re.IGNORECASE)
-                if match:
-                    score = float(match.group(1))
-                    if 1 <= score <= 5:
-                        return str(score)
+            return self._extract_discount_code(page_text)
+        except:
             return ""
             
-        except Exception as e:
+    def _extract_trustpilot_current(self) -> str:
+        """Extract Trustpilot score from current page state"""
+        try:
+            page_text = self.driver.page_source
+            return self._extract_trustpilot_score(page_text)
+        except:
             return ""
             
-    def _extract_profit_target_from_page(self) -> str:
+    def _extract_profit_target_current(self) -> str:
         """Extract profit target from current page state"""
         try:
-            # Look for profit target elements
-            target_selectors = [
-                "[class*='profit']",
-                "[class*='target']", 
-                ".sim-profit-target"
-            ]
-            
-            for selector in target_selectors:
-                try:
-                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                    for element in elements:
-                        text = element.text
-                        target_match = re.search(r'(\d+%)', text)
-                        if target_match:
-                            percentage = int(target_match.group(1).replace('%', ''))
-                            if 1 <= percentage <= 50:
-                                return target_match.group(1)
-                except:
-                    continue
-                    
-            # Fallback to page source search
             page_text = self.driver.page_source
-            profit_matches = re.findall(r'(?:profit|target).*?(\d+%)', page_text, re.IGNORECASE)
-            for match in profit_matches:
-                percentage = int(match.replace('%', ''))
-                if 1 <= percentage <= 50:
-                    return match
-                    
-            return ""
-            
-        except Exception as e:
+            return self._extract_profit_goal(page_text)
+        except:
             return ""
             
     def _normalize_plan_type(self, plan_type: str) -> str:
@@ -370,19 +526,33 @@ class AlphaCapitalScraper(BaseScraper):
             return 'assessment'
             
     def _is_valid_data(self, data: Dict[str, str]) -> bool:
-        """Check if the scraped data contains meaningful information"""
+        """Check if scraped data is valid"""
         required_fields = ['account_size', 'sale_price']
-        return any(data.get(field) for field in required_fields)
+        return any(data.get(field) and str(data.get(field)).strip() for field in required_fields)
         
     def parse_page_source(self, page_source: str) -> List[Dict[str, str]]:
-        """Fallback method for static HTML parsing"""
-        # This method is kept for compatibility but main scraping now uses Selenium
-        return self.scrape_accounts()
+        """Parse page source for account information (fallback method)"""
+        accounts_data = []
         
-    def __del__(self):
-        """Cleanup driver on object destruction"""
-        if hasattr(self, 'driver') and self.driver:
-            try:
-                self.driver.quit()
-            except:
-                pass
+        try:
+            soup = BeautifulSoup(page_source, 'html.parser')
+            
+            # Look for sections containing pricing info
+            sections = soup.find_all(['div', 'section'], 
+                                   class_=re.compile(r'(?:plan|price|account|tier)', re.I))
+            
+            for section in sections:
+                text = section.get_text()
+                if len(text.strip()) < 50:
+                    continue
+                    
+                account_data = self.extract_account_info(text)
+                
+                if account_data and self._is_valid_data(account_data):
+                    accounts_data.append(account_data)
+                    
+            return accounts_data[:10]  # Limit results
+            
+        except Exception as e:
+            self.logger.error(f"Error parsing page source: {e}")
+            return []
