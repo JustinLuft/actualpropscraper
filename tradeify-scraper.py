@@ -6,7 +6,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-def scrape_tradeify(driver):
+def TradeifyScraper(driver):
     """
     Scrape Tradeify plans data
     Expects a selenium webdriver instance to be passed in
