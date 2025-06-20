@@ -10,7 +10,7 @@ on:
       websites:
         description: 'Comma-separated list of websites to scrape'
         required: false
-        default: 'alphacapitalgroup.uk'
+        default: 'tradeify.co'
       headless:
         description: 'Run in headless mode'
         required: false
