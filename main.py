@@ -71,18 +71,10 @@ def main():
                 results = scraper.scrape_website()
                 
                 if results:
-                    # Save individual website results
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    clean_website = website.replace('.', '_').replace('/', '_')
-                    filename = f"{output_dir}/{clean_website}_{timestamp}.csv"
-                    
-                    if scraper.save_to_csv(results, filename):
-                        all_results.extend(results)
-                        successful_scrapes += 1
-                        logger.info(f"✅ Successfully scraped {len(results)} records from {website}")
-                    else:
-                        logger.error(f"❌ Failed to save data from {website}")
-                        failed_scrapes += 1
+                    # Add results to combined list (no individual file saving)
+                    all_results.extend(results)
+                    successful_scrapes += 1
+                    logger.info(f"✅ Successfully scraped {len(results)} records from {website}")
                 else:
                     logger.warning(f"❌ No data scraped from {website}")
                     failed_scrapes += 1
@@ -92,22 +84,22 @@ def main():
                 failed_scrapes += 1
                 continue
                 
-        # Generate final report
-        generate_report(all_results, output_dir, successful_scrapes, failed_scrapes, logger)
+        # Generate final report and save combined CSV
+        generate_combined_report(all_results, output_dir, successful_scrapes, failed_scrapes, logger)
         
     except Exception as e:
         logger.error(f"Critical error in main process: {e}")
         sys.exit(1)
 
-def generate_report(all_results: List[Dict], output_dir: str, successful: int, failed: int, logger):
-    """Generate comprehensive scraping report"""
+def generate_combined_report(all_results: List[Dict], output_dir: str, successful: int, failed: int, logger):
+    """Generate comprehensive scraping report and save combined CSV only"""
     
     logger.info(f"\n{'='*60}")
     logger.info("SCRAPING REPORT")
     logger.info(f"{'='*60}")
     
     if all_results:
-        # Save combined results
+        # Save combined results only
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         combined_filename = f"{output_dir}/combined_results_{timestamp}.csv"
         
