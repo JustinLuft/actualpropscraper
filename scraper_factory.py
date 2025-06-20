@@ -6,9 +6,7 @@ class ScraperFactory:
     """Enhanced factory class with better website matching"""
     
     _scrapers: Dict[str, Type[BaseScraper]] = {
-        'alphacapitalgroup.uk': AlphaCapitalScraper,
-        'alpha-capital': AlphaCapitalScraper,
-        'alphacapital': AlphaCapitalScraper,
+        'tradeify.co': TradeifyScraper,
         # Add more scrapers here as you create them
         # 'example.com': ExampleScraper,
     }
