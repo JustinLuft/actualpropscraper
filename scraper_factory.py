@@ -1,6 +1,6 @@
 from typing import Dict, Type, List
 from base_scraper import BaseScraper
-from alpha_capital_scraper import AlphaCapitalScraper
+from scrape_tradeify_simple import TradeifyScraper
 
 class ScraperFactory:
     """Enhanced factory class with better website matching"""
