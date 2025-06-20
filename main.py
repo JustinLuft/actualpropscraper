@@ -3,8 +3,8 @@ import sys
 from datetime import datetime
 from typing import List, Dict
 import pandas as pd
-from scraper.scraper_factory import ScraperFactory
-from scraper.config import Config
+from scraper_factory import ScraperFactory
+from config import Config
 
 def setup_logging():
     """Setup main logging"""
